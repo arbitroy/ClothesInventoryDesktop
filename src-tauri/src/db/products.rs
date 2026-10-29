@@ -1,5 +1,5 @@
-use rusqlite::{Connection, OptionalExtension, params};
-use std::time::{SystemTime, UNIX_EPOCH};
+use super::{Database, now_ms};
+use rusqlite::{OptionalExtension, params};
 
 #[derive(Debug)]
 pub struct Product {
@@ -13,36 +13,7 @@ pub struct Product {
     pub deleted_at: Option<i64>,
 }
 
-pub struct Database {
-    conn: Connection,
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
-
 impl Database {
-    pub fn open(path: &str) -> rusqlite::Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS products (
-                id         TEXT PRIMARY KEY,
-                name       TEXT NOT NULL,
-                size       TEXT,
-                notes      TEXT,
-                version    INTEGER NOT NULL DEFAULT 1,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                deleted_at INTEGER
-            );",
-        )?;
-        Ok(Self { conn })
-    }
-
     pub fn create_product(
         &self,
         name: &str,
@@ -86,8 +57,8 @@ impl Database {
         self.conn
             .query_row(
                 "SELECT id, name, size, notes, version, created_at, updated_at, deleted_at
-             FROM products
-             WHERE id = ?",
+                FROM products
+                WHERE id = ?",
                 [id],
                 |row| {
                     Ok(Product {
