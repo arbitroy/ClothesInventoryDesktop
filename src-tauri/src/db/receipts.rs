@@ -82,14 +82,13 @@ impl Database {
     }
 
     pub fn list_items(&self, receipt_id: &str) -> rusqlite::Result<Vec<ContainerItem>> {
-                let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(
             "SELECT id, receipt_id, product_id, quantity_received, notes, created_at
-             FROM container_items
-             WHERE receipt_id = ?
-             ",
+         FROM container_items
+         WHERE receipt_id = ?1
+         ORDER BY created_at",
         )?;
-
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map([receipt_id], |row| {
             Ok(ContainerItem {
                 id: row.get(0)?,
                 receipt_id: row.get(1)?,
@@ -136,5 +135,20 @@ mod tests {
         let t = db.receipt_totals(&receipt).unwrap();
         assert_eq!(t.total_skus, 2);
         assert_eq!(t.total_units, 80);
+    }
+
+    #[test]
+    fn list_items_only_returns_that_receipt() {
+        let db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        let r1 = db.create_receipt("BALE-001", 0, None).unwrap();
+        let r2 = db.create_receipt("BALE-002", 0, None).unwrap();
+
+        db.add_item(&r1, &jeans, 50, None).unwrap();
+        db.add_item(&r1, &jeans, 10, None).unwrap();
+        db.add_item(&r2, &jeans, 5, None).unwrap();
+
+        assert_eq!(db.list_items(&r1).unwrap().len(), 2);
+        assert_eq!(db.list_items(&r2).unwrap().len(), 1);
     }
 }
