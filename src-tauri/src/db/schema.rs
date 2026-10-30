@@ -30,4 +30,22 @@ CREATE TABLE IF NOT EXISTS container_items (
     notes             TEXT,
     created_at        INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id              TEXT PRIMARY KEY,
+    product_id      TEXT NOT NULL REFERENCES products(id),
+    type            TEXT NOT NULL CHECK (type IN ('in', 'out')),
+    out_reason      TEXT CHECK (out_reason IN ('sales', 'damage', 'adjustment')),
+    quantity        INTEGER NOT NULL CHECK (quantity > 0),
+    user_id         TEXT,
+    notes           TEXT,
+    receipt_item_id TEXT REFERENCES container_items(id),
+    price_per_unit  INTEGER,   -- minor units (e.g. cents), not decimals
+    total_price     INTEGER,
+    timestamp       INTEGER NOT NULL,
+    CHECK (
+        (type = 'in'  AND out_reason IS NULL) OR
+        (type = 'out' AND out_reason IS NOT NULL)
+    )
+);g
 ";

@@ -84,9 +84,9 @@ impl Database {
     pub fn list_items(&self, receipt_id: &str) -> rusqlite::Result<Vec<ContainerItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, receipt_id, product_id, quantity_received, notes, created_at
-         FROM container_items
-         WHERE receipt_id = ?1
-         ORDER BY created_at",
+            FROM container_items
+            WHERE receipt_id = ?1
+            ORDER BY created_at",
         )?;
         let rows = stmt.query_map([receipt_id], |row| {
             Ok(ContainerItem {
@@ -99,6 +99,13 @@ impl Database {
             })
         })?;
         rows.collect()
+    }
+
+    pub fn finalize_receipt(&mut self, receipt_id: &str) -> rusqlite::Result<usize> {
+        let tx = self.conn.transaction()?;
+        tx.execute("UPDATE container_receipts SET status = 'finalized', version = version + 1, updated_at = ?1 WHERE id = ?2", params![ now_ms(), receipt_id ])?;
+        tx.commit()?;
+        Ok(())
     }
 }
 
@@ -150,5 +157,25 @@ mod tests {
 
         assert_eq!(db.list_items(&r1).unwrap().len(), 2);
         assert_eq!(db.list_items(&r2).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn finalize_creates_stock_in_once() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        let shirts = db.create_product("Shirts", Some("L"), None).unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 50, None).unwrap();
+        db.add_item(&r, &shirts, 30, None).unwrap();
+
+        assert_eq!(db.finalize_receipt(&r).unwrap(), 2);
+        // finalizing again does nothing
+        assert_eq!(db.finalize_receipt(&r).unwrap(), 0);
+
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2); // still 2, not 4
     }
 }
