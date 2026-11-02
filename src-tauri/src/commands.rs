@@ -1,5 +1,5 @@
-use crate::db::Product;
 use crate::AppState;
+use crate::db::Product;
 use tauri::State;
 
 #[tauri::command]
@@ -18,4 +18,10 @@ pub fn create_product(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.create_product(&name, size.as_deref(), notes.as_deref())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_product(state: State<'_, AppState>, id: String) -> Result<usize, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_product(&id).map_err(|e| e.to_string())
 }

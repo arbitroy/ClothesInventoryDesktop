@@ -27,6 +27,15 @@ export default function App() {
     load();
   }
 
+async function deleteProduct(id: string) {
+  try {
+    await invoke("delete_product", { id });
+    load();
+  } catch (e) {
+    alert(`Delete failed: ${e}`);
+  }
+}
+
   useEffect(() => {
     load();
   }, []);
@@ -42,7 +51,9 @@ export default function App() {
       <button onClick={add}>Add</button>
       <ul>
         {products.map((p) => (
-          <li key={p.id}>{p.name} (v{p.version})</li>
+          <li key={p.id} >
+            {p.name} V({p.version})<button onClick={() => deleteProduct(p.id)}>Delete</button>
+          </li>
         ))}
       </ul>
     </main>
