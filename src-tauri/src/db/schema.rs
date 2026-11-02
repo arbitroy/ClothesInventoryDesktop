@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS products (
             name       TEXT NOT NULL,
             size       TEXT,
             notes      TEXT,
+            version    INTEGER NOT NULL DEFAULT 1,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             deleted_at INTEGER
@@ -47,5 +48,16 @@ CREATE TABLE IF NOT EXISTS transactions (
         (type = 'in'  AND out_reason IS NULL) OR
         (type = 'out' AND out_reason IS NOT NULL)
     )
-);g
+);
+
+CREATE TABLE IF NOT EXISTS review_flags (
+    id          TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,   -- 'transaction' for now
+    entity_id   TEXT NOT NULL,
+    reason      TEXT NOT NULL,   -- 'negative_stock'
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at  INTEGER NOT NULL,
+    resolved_at INTEGER
+);
 ";

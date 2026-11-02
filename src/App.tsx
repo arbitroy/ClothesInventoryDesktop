@@ -1,51 +1,50 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
+type Product = {
+  id: string;
+  name: string;
+  size: string | null;
+  notes: string | null;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+};
+
+export default function App() {
+  const [products, setProducts] = useState<Product[]>([]);
   const [name, setName] = useState("");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  async function load() {
+    setProducts(await invoke<Product[]>("list_products"));
   }
 
+  async function add() {
+    if (!name.trim()) return;
+    await invoke("create_product", { name, size: null, notes: null });
+    setName("");
+    load();
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+    <main style={{ padding: 24 }}>
+      <h1>Products</h1>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Product name"
+      />
+      <button onClick={add}>Add</button>
+      <ul>
+        {products.map((p) => (
+          <li key={p.id}>{p.name} (v{p.version})</li>
+        ))}
+      </ul>
     </main>
   );
 }
-
-export default App;

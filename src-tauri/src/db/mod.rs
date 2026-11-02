@@ -1,5 +1,6 @@
 mod products;
 mod receipts;
+mod transactions;
 mod schema;
 
 pub use products::Product;
@@ -20,7 +21,7 @@ fn now_ms() -> i64 {
 }
 
 impl Database {
-    pub fn open(path: &str) -> rusqlite::Result<Self> {
+    pub fn open(path: impl AsRef<std::path::Path>) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(schema::SCHEMA)?;

@@ -1,7 +1,10 @@
 use super::{Database, now_ms};
 use rusqlite::{OptionalExtension, params};
+use serde::Serialize;
 
-#[derive(Debug)]
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Product {
     pub id: String,
     pub name: String,

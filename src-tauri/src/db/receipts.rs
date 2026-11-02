@@ -1,5 +1,5 @@
 use super::{Database, now_ms};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 #[derive(Debug)]
 pub struct Receipt {
@@ -57,12 +57,25 @@ impl Database {
     ) -> rusqlite::Result<String> {
         let id = uuid::Uuid::now_v7().to_string();
         let now = now_ms();
-        self.conn.execute(
-            "INSERT INTO container_items
+        let status: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT status FROM container_receipts WHERE id = ?1",
+                [receipt_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match status.as_deref() {
+            Some("draft") => self.conn.execute(
+                "INSERT INTO container_items
                 (id, receipt_id,  product_id, quantity_received, notes, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, receipt_id, product_id, quantity, notes, now],
-        )?;
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, receipt_id, product_id, quantity, notes, now],
+            ),
+            _ => return Err(rusqlite::Error::InvalidQuery),
+        }?;
+
         Ok(id)
     }
 
@@ -103,9 +116,44 @@ impl Database {
 
     pub fn finalize_receipt(&mut self, receipt_id: &str) -> rusqlite::Result<usize> {
         let tx = self.conn.transaction()?;
-        tx.execute("UPDATE container_receipts SET status = 'finalized', version = version + 1, updated_at = ?1 WHERE id = ?2", params![ now_ms(), receipt_id ])?;
+
+        let changed = tx.execute(
+            "UPDATE container_receipts
+            SET status = 'finalized', version = version + 1, updated_at = ?1
+            WHERE id = ?2 AND status = 'draft'",
+            params![now_ms(), receipt_id],
+        )?;
+        if changed == 0 {
+            return Ok(0); // tx is dropped, nothing was written
+        }
+
+        // read first, into a Vec
+        let items: Vec<(String, String, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, product_id, quantity_received
+                FROM container_items
+                WHERE receipt_id = ?1
+                ORDER BY created_at",
+            )?;
+            let rows = stmt.query_map([receipt_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+
+        // then insert one 'in' transaction per item
+        for (item_id, product_id, quantity) in &items {
+            let id = uuid::Uuid::now_v7().to_string();
+            tx.execute(
+                "INSERT INTO transactions
+                (id, product_id, type, quantity, receipt_item_id, timestamp)
+                VALUES (?1, ?2, 'in', ?3, ?4, ?5)",
+                params![id, product_id, quantity, item_id, now_ms()],
+            )?;
+        }
+
         tx.commit()?;
-        Ok(())
+        Ok(items.len())
     }
 }
 
@@ -167,15 +215,24 @@ mod tests {
         let r = db.create_receipt("BALE-001", 0, None).unwrap();
         db.add_item(&r, &jeans, 50, None).unwrap();
         db.add_item(&r, &shirts, 30, None).unwrap();
-
         assert_eq!(db.finalize_receipt(&r).unwrap(), 2);
         // finalizing again does nothing
         assert_eq!(db.finalize_receipt(&r).unwrap(), 0);
-
         let count: i64 = db
             .conn
             .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 2); // still 2, not 4
+    }
+
+    #[test]
+    fn cannot_add_item_after_finalize() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 50, None).unwrap();
+        db.finalize_receipt(&r).unwrap();
+
+        assert!(db.add_item(&r, &jeans, 10, None).is_err());
     }
 }
