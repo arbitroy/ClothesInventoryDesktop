@@ -2,9 +2,11 @@ mod products;
 mod receipts;
 mod transactions;
 mod schema;
+mod error;
 
 pub use products::Product;
-pub use receipts::{ContainerItem, Receipt};
+pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
+pub use error::{DbError,DbResult};
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};

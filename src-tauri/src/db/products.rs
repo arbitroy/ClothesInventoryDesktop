@@ -1,9 +1,11 @@
+use crate::db::DbResult;
+
 use super::{Database, now_ms};
 use rusqlite::{OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Product {
     pub id: String,
@@ -22,7 +24,7 @@ impl Database {
         name: &str,
         size: Option<&str>,
         notes: Option<&str>,
-    ) -> rusqlite::Result<String> {
+    ) -> DbResult<String> {
         let id = uuid::Uuid::now_v7().to_string();
         let now = now_ms();
         self.conn.execute(
@@ -33,7 +35,7 @@ impl Database {
         Ok(id)
     }
 
-    pub fn list_products(&self) -> rusqlite::Result<Vec<Product>> {
+    pub fn list_products(&self) -> DbResult<Vec<Product>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, size, notes, version, created_at, updated_at, deleted_at
              FROM products
@@ -53,11 +55,11 @@ impl Database {
                 deleted_at: row.get(7)?,
             })
         })?;
-        rows.collect()
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn get_product(&self, id: &str) -> rusqlite::Result<Option<Product>> {
-        self.conn
+    pub fn get_product(&self, id: &str) -> DbResult<Option<Product>> {
+        Ok(self.conn
             .query_row(
                 "SELECT id, name, size, notes, version, created_at, updated_at, deleted_at
                 FROM products
@@ -76,26 +78,26 @@ impl Database {
                     })
                 },
             )
-            .optional()
+            .optional()?)
     }
 
-    pub fn update_product(&self, p: &Product) -> rusqlite::Result<usize> {
-        self.conn.execute(
+    pub fn update_product(&self, p: &Product) -> DbResult<usize> {
+        Ok(self.conn.execute(
             "UPDATE products
                 SET name = ?1, size = ?2, notes = ?3,
                 version = version + 1, updated_at = ?4
                 WHERE id = ?5 AND version = ?6",
             params![p.name, p.size, p.notes, now_ms(), p.id, p.version],
-        )
+        )?)
     }
 
-    pub fn delete_product(&self, id: &str) -> rusqlite::Result<usize> {
-        self.conn.execute(
+    pub fn delete_product(&self, id: &str) -> DbResult<usize> {
+        Ok(self.conn.execute(
             "UPDATE products
             SET deleted_at = ?1, version = version + 1, updated_at = ?1
             WHERE id = ?2 AND deleted_at IS NULL",
             params![now_ms(), id],
-        )
+        )?)
     }
 }
 

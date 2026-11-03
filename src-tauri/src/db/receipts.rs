@@ -1,7 +1,11 @@
+use crate::db::error::{DbError, DbResult};
+
 use super::{Database, now_ms};
 use rusqlite::{OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Receipt {
     pub id: String,
     pub container_number: String,
@@ -14,7 +18,8 @@ pub struct Receipt {
     pub deleted_at: Option<i64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerItem {
     pub id: String,
     pub receipt_id: String,
@@ -24,19 +29,30 @@ pub struct ContainerItem {
     pub created_at: i64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReceiptTotals {
     pub total_skus: i64,
     pub total_units: i64,
 }
 
 impl Database {
+    fn receipt_status(conn: &rusqlite::Connection, receipt_id: &str) -> DbResult<String> {
+        conn.query_row(
+            "SELECT status FROM container_receipts WHERE id = ?1",
+            [receipt_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(DbError::ReceiptNotFound)
+    }
+    
     pub fn create_receipt(
         &self,
         container_number: &str,
         received_date: i64,
         notes: Option<&str>,
-    ) -> rusqlite::Result<String> {
+    ) -> DbResult<String> {
         let id = uuid::Uuid::now_v7().to_string();
         let now = now_ms();
         self.conn.execute(
@@ -54,9 +70,7 @@ impl Database {
         product_id: &str,
         quantity: i64,
         notes: Option<&str>,
-    ) -> rusqlite::Result<String> {
-        let id = uuid::Uuid::now_v7().to_string();
-        let now = now_ms();
+    ) -> DbResult<String> {
         let status: Option<String> = self
             .conn
             .query_row(
@@ -67,20 +81,23 @@ impl Database {
             .optional()?;
 
         match status.as_deref() {
-            Some("draft") => self.conn.execute(
-                "INSERT INTO container_items
-                (id, receipt_id,  product_id, quantity_received, notes, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, receipt_id, product_id, quantity, notes, now],
-            ),
-            _ => return Err(rusqlite::Error::InvalidQuery),
-        }?;
+            Some("draft") => {}
+            Some(_) => return Err(DbError::ReceiptFinalized),
+            None => return Err(DbError::ReceiptNotFound),
+        }
 
+        let id = uuid::Uuid::now_v7().to_string();
+        self.conn.execute(
+            "INSERT INTO container_items
+            (id, receipt_id, product_id, quantity_received, notes, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, receipt_id, product_id, quantity, notes, now_ms()],
+        )?;
         Ok(id)
     }
 
-    pub fn receipt_totals(&self, receipt_id: &str) -> rusqlite::Result<ReceiptTotals> {
-        self.conn.query_row(
+    pub fn receipt_totals(&self, receipt_id: &str) -> DbResult<ReceiptTotals> {
+        Ok(self.conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(quantity_received), 0)
             FROM container_items
             WHERE receipt_id = ?1",
@@ -91,10 +108,10 @@ impl Database {
                     total_units: row.get(1)?,
                 })
             },
-        )
+        )?)
     }
 
-    pub fn list_items(&self, receipt_id: &str) -> rusqlite::Result<Vec<ContainerItem>> {
+    pub fn list_items(&self, receipt_id: &str) -> DbResult<Vec<ContainerItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, receipt_id, product_id, quantity_received, notes, created_at
             FROM container_items
@@ -111,10 +128,34 @@ impl Database {
                 created_at: row.get(5)?,
             })
         })?;
-        rows.collect()
+        Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }
 
-    pub fn finalize_receipt(&mut self, receipt_id: &str) -> rusqlite::Result<usize> {
+    pub fn list_receipts(&self) -> DbResult<Vec<Receipt>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, container_number, received_date, notes, status, version, created_at, updated_at, deleted_at 
+            FROM container_receipts
+            WHERE deleted_at IS NULL
+            ORDER BY received_date DESC
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Receipt {
+                id: row.get(0)?,
+                container_number: row.get(1)?,
+                received_date: row.get(2)?,
+                notes: row.get(3)?,
+                status: row.get(4)?,
+                version: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                deleted_at: row.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
+    }
+
+    pub fn finalize_receipt(&mut self, receipt_id: &str) -> DbResult<usize> {
         let tx = self.conn.transaction()?;
 
         let changed = tx.execute(

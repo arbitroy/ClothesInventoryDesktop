@@ -5,8 +5,17 @@ use db::Database;
 use std::sync::Mutex;
 use tauri::Manager;
 
+
 pub struct AppState {
     pub db: Mutex<Database>,
+}
+
+impl AppState {
+    pub fn db(&self) -> Result<std::sync::MutexGuard<'_, Database>, db::DbError> {
+        self.db
+            .lock()
+            .map_err(|_| db::DbError::Internal("database lock poisoned".into()))
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,7 +32,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_products,
             commands::create_product,
-            commands::delete_product
+            commands::delete_product,
+            commands::update_product,
+            commands::create_receipt,
+            commands::add_item,
+            commands::list_items,
+            commands::receipt_totals,
+            commands::finalize_receipt,
+            commands::list_receipts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
