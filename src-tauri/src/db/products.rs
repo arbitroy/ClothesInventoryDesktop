@@ -1,9 +1,8 @@
-use crate::db::DbResult;
+use crate::db::{DbError, DbResult};
 
 use super::{Database, now_ms};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +58,8 @@ impl Database {
     }
 
     pub fn get_product(&self, id: &str) -> DbResult<Option<Product>> {
-        Ok(self.conn
+        Ok(self
+            .conn
             .query_row(
                 "SELECT id, name, size, notes, version, created_at, updated_at, deleted_at
                 FROM products
@@ -92,6 +92,10 @@ impl Database {
     }
 
     pub fn delete_product(&self, id: &str) -> DbResult<usize> {
+        let stock = self.current_stock(id)?;
+        if stock != 0 {
+            return Err(DbError::ProductHasStock(stock));
+        }
         Ok(self.conn.execute(
             "UPDATE products
             SET deleted_at = ?1, version = version + 1, updated_at = ?1
@@ -161,5 +165,22 @@ mod tests {
 
         // deleting again does nothing
         assert_eq!(db.delete_product(&id).unwrap(), 0);
+    }
+
+    #[test]
+    fn cannot_delete_product_with_stock() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 5, None).unwrap();
+        db.finalize_receipt(&r).unwrap();
+
+        assert!(matches!(
+            db.delete_product(&jeans),
+            Err(DbError::ProductHasStock(5))
+        ));
+
+        db.record_out(&jeans, 5, "sales", None).unwrap();
+        assert_eq!(db.delete_product(&jeans).unwrap(), 1);
     }
 }

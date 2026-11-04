@@ -12,6 +12,12 @@ pub enum DbError {
     Internal(String),
     #[error("Add at least one item before finalizing")]
     EmptyReceipt,
+    #[error("This product still has stock ({0}). Bring it to zero before deleting")]
+    ProductHasStock(i64),
+    #[error("Product not found")]
+    ProductNotFound,
+    #[error("Quantity must be at least 1")]
+    InvalidQuantity,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

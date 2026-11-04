@@ -24,6 +24,7 @@ pub struct ContainerItem {
     pub id: String,
     pub receipt_id: String,
     pub product_id: String,
+    pub product_name: String,
     pub quantity_received: i64,
     pub notes: Option<String>,
     pub created_at: i64,
@@ -46,7 +47,7 @@ impl Database {
         .optional()?
         .ok_or(DbError::ReceiptNotFound)
     }
-    
+
     pub fn create_receipt(
         &self,
         container_number: &str,
@@ -71,19 +72,21 @@ impl Database {
         quantity: i64,
         notes: Option<&str>,
     ) -> DbResult<String> {
-        let status: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT status FROM container_receipts WHERE id = ?1",
-                [receipt_id],
-                |row| row.get(0),
-            )
-            .optional()?;
+        if Self::receipt_status(&self.conn, receipt_id)? != "draft" {
+            return Err(DbError::ReceiptFinalized);
+        }
 
-        match status.as_deref() {
-            Some("draft") => {}
-            Some(_) => return Err(DbError::ReceiptFinalized),
-            None => return Err(DbError::ReceiptNotFound),
+        if quantity < 1 {
+            return Err(DbError::InvalidQuantity);
+        }
+
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM products WHERE id = ?1 AND deleted_at IS NULL)",
+            [product_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(DbError::ProductNotFound);
         }
 
         let id = uuid::Uuid::now_v7().to_string();
@@ -113,19 +116,22 @@ impl Database {
 
     pub fn list_items(&self, receipt_id: &str) -> DbResult<Vec<ContainerItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, receipt_id, product_id, quantity_received, notes, created_at
-            FROM container_items
-            WHERE receipt_id = ?1
-            ORDER BY created_at",
+            "SELECT ci.id, ci.receipt_id, ci.product_id, p.name,
+            ci.quantity_received, ci.notes, ci.created_at
+            FROM container_items ci
+            JOIN products p ON p.id = ci.product_id
+            WHERE ci.receipt_id = ?1
+            ORDER BY ci.created_at",
         )?;
         let rows = stmt.query_map([receipt_id], |row| {
             Ok(ContainerItem {
                 id: row.get(0)?,
                 receipt_id: row.get(1)?,
                 product_id: row.get(2)?,
-                quantity_received: row.get(3)?,
-                notes: row.get(4)?,
-                created_at: row.get(5)?,
+                product_name: row.get(3)?,
+                quantity_received: row.get(4)?,
+                notes: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
@@ -158,6 +164,17 @@ impl Database {
     pub fn finalize_receipt(&mut self, receipt_id: &str) -> DbResult<usize> {
         let tx = self.conn.transaction()?;
 
+        if Self::receipt_status(&tx, receipt_id)? != "draft" {
+            return Err(DbError::ReceiptFinalized);
+        }
+        let item_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM container_items WHERE receipt_id = ?1",
+            [receipt_id],
+            |row| row.get(0),
+        )?;
+        if item_count == 0 {
+            return Err(DbError::EmptyReceipt);
+        }
         let changed = tx.execute(
             "UPDATE container_receipts
             SET status = 'finalized', version = version + 1, updated_at = ?1
@@ -258,7 +275,10 @@ mod tests {
         db.add_item(&r, &shirts, 30, None).unwrap();
         assert_eq!(db.finalize_receipt(&r).unwrap(), 2);
         // finalizing again does nothing
-        assert_eq!(db.finalize_receipt(&r).unwrap(), 0);
+        assert!(matches!(
+            db.finalize_receipt(&r),
+            Err(DbError::ReceiptFinalized)
+        ));
         let count: i64 = db
             .conn
             .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
@@ -275,5 +295,29 @@ mod tests {
         db.finalize_receipt(&r).unwrap();
 
         assert!(db.add_item(&r, &jeans, 10, None).is_err());
+    }
+
+    #[test]
+    fn cannot_finalize_empty_receipt() {
+        let mut db = Database::open(":memory:").unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        assert!(matches!(
+            db.finalize_receipt(&r),
+            Err(DbError::EmptyReceipt)
+        ));
+    }
+
+    #[test]
+    fn item_name_survives_product_delete() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 5, None).unwrap();
+        db.finalize_receipt(&r).unwrap();
+        db.record_out(&jeans, 5, "sales", None).unwrap();
+        db.delete_product(&jeans).unwrap();
+
+        let items = db.list_items(&r).unwrap();
+        assert_eq!(items[0].product_name, "Jeans");
     }
 }
