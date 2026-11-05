@@ -83,3 +83,8 @@ pub fn list_receipts(state: State<'_, AppState>) -> Result<Vec<Receipt>, DbError
     let db = state.db()?;
     db.list_receipts()
 }
+
+#[tauri::command]
+pub fn list_products_with_stock(state: State<'_, AppState>) -> Result<Vec<ProductWithStock>, DbError> {
+    state.db()?.list_products_with_stock()
+}

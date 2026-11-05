@@ -39,7 +39,8 @@ pub fn run() {
             commands::list_items,
             commands::receipt_totals,
             commands::finalize_receipt,
-            commands::list_receipts
+            commands::list_receipts,
+            commands::list_products_with_stock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

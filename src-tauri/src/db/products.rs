@@ -17,6 +17,14 @@ pub struct Product {
     pub deleted_at: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductWithStock {
+    #[serde(flatten)]
+    pub product: Product,
+    pub stock: i64,
+}
+
 impl Database {
     pub fn create_product(
         &self,
@@ -52,6 +60,37 @@ impl Database {
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 deleted_at: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn list_products_with_stock(&self) -> DbResult<Vec<ProductWithStock>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.name, p.size, p.notes, p.version,
+            p.created_at, p.updated_at, p.deleted_at,
+            COALESCE(SUM(CASE t.type WHEN 'in' THEN t.quantity
+                                WHEN 'out' THEN -t.quantity END), 0) AS stock
+            FROM products p
+            LEFT JOIN transactions t ON t.product_id = p.id
+            WHERE p.deleted_at IS NULL
+            GROUP BY p.id
+            ORDER BY p.name",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ProductWithStock {
+                product: Product {
+                    id: (row.get(0)?),
+                    name: (row.get(1)?),
+                    size: (row.get(2)?),
+                    notes: (row.get(3)?),
+                    version: (row.get(4)?),
+                    created_at: (row.get(5)?),
+                    updated_at: (row.get(6)?),
+                    deleted_at: (row.get(7)?),
+                },
+                stock: row.get(8)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -182,5 +221,20 @@ mod tests {
 
         db.record_out(&jeans, 5, "sales", None).unwrap();
         assert_eq!(db.delete_product(&jeans).unwrap(), 1);
+    }
+
+    #[test]
+    fn stock_shows_in_product_list() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", Some("M"), None).unwrap();
+        db.create_product("Shirts", Some("L"), None).unwrap(); // never received
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 10, None).unwrap();
+        db.finalize_receipt(&r).unwrap();
+        db.record_out(&jeans, 3, "sales", None).unwrap();
+
+        let list = db.list_products_with_stock().unwrap();
+        assert_eq!(list[0].stock, 7); // Jeans (sorted by name: Jeans, Shirts)
+        assert_eq!(list[1].stock, 0); // Shirts has no transactions
     }
 }

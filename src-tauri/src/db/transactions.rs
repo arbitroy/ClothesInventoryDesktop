@@ -1,5 +1,5 @@
 use super::{Database, now_ms};
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 
 impl Database {
     pub fn current_stock(&self, product_id: &str) -> rusqlite::Result<i64> {
