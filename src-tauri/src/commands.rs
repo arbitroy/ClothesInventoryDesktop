@@ -1,5 +1,7 @@
 use crate::AppState;
-use crate::db::{ContainerItem, DbError, Product, Receipt, ReceiptTotals};
+use crate::db::{
+    ContainerItem, DbError, PendingFlag, Product, ProductWithStock, Receipt, ReceiptTotals,
+};
 use tauri::State;
 
 #[tauri::command]
@@ -85,6 +87,23 @@ pub fn list_receipts(state: State<'_, AppState>) -> Result<Vec<Receipt>, DbError
 }
 
 #[tauri::command]
-pub fn list_products_with_stock(state: State<'_, AppState>) -> Result<Vec<ProductWithStock>, DbError> {
+pub fn list_products_with_stock(
+    state: State<'_, AppState>,
+) -> Result<Vec<ProductWithStock>, DbError> {
     state.db()?.list_products_with_stock()
+}
+
+#[tauri::command]
+pub fn list_pending_flags(state: State<'_, AppState>) -> Result<Vec<PendingFlag>, DbError> {
+    state.db()?.list_pending_flags()
+}
+
+#[tauri::command]
+pub fn resolve_flag(
+    state: State<'_, AppState>,
+    flag_id: &str,
+    approve: bool,
+) -> Result<(), DbError> {
+    let db = state.db()?;
+    db.resolve_flag(flag_id, approve)
 }

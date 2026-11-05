@@ -1,12 +1,14 @@
+mod error;
 mod products;
 mod receipts;
-mod transactions;
 mod schema;
-mod error;
+mod transactions;
+mod flag;
 
-pub use products::Product;
+pub use error::{DbError, DbResult};
+pub use products::{Product, ProductWithStock};
 pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
-pub use error::{DbError,DbResult};
+pub use flag::PendingFlag;
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -18,6 +18,8 @@ pub enum DbError {
     ProductNotFound,
     #[error("Quantity must be at least 1")]
     InvalidQuantity,
+    #[error("This flag doesn't exist or was already resolved")]
+    FlagNotPending,
 }
 
 pub type DbResult<T> = Result<T, DbError>;
