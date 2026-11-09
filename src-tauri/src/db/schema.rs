@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id              TEXT PRIMARY KEY,
     product_id      TEXT NOT NULL REFERENCES products(id),
     type            TEXT NOT NULL CHECK (type IN ('in', 'out')),
-    out_reason      TEXT CHECK (out_reason IN ('sales', 'damage', 'adjustment')),
+    reason      TEXT CHECK (reason IN ('sales', 'damage', 'adjustment')),
     quantity        INTEGER NOT NULL CHECK (quantity > 0),
     user_id         TEXT,
     notes           TEXT,
@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     total_price     INTEGER,
     timestamp       INTEGER NOT NULL,
     CHECK (
-        (type = 'in'  AND out_reason IS NULL) OR
-        (type = 'out' AND out_reason IS NOT NULL)
+        (type = 'in'  AND reason IS NULL) OR
+        (type = 'out' AND reason IS NOT NULL)
     )
 );
 
@@ -59,5 +59,20 @@ CREATE TABLE IF NOT EXISTS review_flags (
                 CHECK (status IN ('pending', 'approved', 'rejected')),
     created_at  INTEGER NOT NULL,
     resolved_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS daily_balances (
+    date             TEXT NOT NULL,   -- 'YYYY-MM-DD'
+    product_id       TEXT NOT NULL REFERENCES products(id),
+    opening_balance  INTEGER NOT NULL,
+    total_in         INTEGER NOT NULL,
+    total_out        INTEGER NOT NULL,
+    expected_balance INTEGER NOT NULL,
+    closing_balance  INTEGER NOT NULL CHECK (closing_balance >= 0),
+    variance         INTEGER NOT NULL,
+    variance_notes   TEXT,
+    closed_by        TEXT NOT NULL,
+    closed_at        INTEGER NOT NULL,
+    PRIMARY KEY (date, product_id)
 );
 ";
