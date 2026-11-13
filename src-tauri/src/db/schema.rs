@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id              TEXT PRIMARY KEY,
     product_id      TEXT NOT NULL REFERENCES products(id),
     type            TEXT NOT NULL CHECK (type IN ('in', 'out')),
-    reason      TEXT CHECK (reason IN ('sales', 'damage', 'adjustment')),
+    reason TEXT CHECK (reason IN ('sales', 'damage', 'adjustment')),
     quantity        INTEGER NOT NULL CHECK (quantity > 0),
     user_id         TEXT,
     notes           TEXT,
@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     total_price     INTEGER,
     timestamp       INTEGER NOT NULL,
     CHECK (
-        (type = 'in'  AND reason IS NULL) OR
-        (type = 'out' AND reason IS NOT NULL)
+    (type = 'in'  AND (reason IS NULL OR reason = 'adjustment')) OR
+    (type = 'out' AND reason IS NOT NULL)
     )
 );
 

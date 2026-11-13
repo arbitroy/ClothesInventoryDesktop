@@ -16,7 +16,7 @@ impl Database {
         &mut self,
         product_id: &str,
         quantity: i64,
-        out_reason: &str,
+        reason: &str,
         price_per_unit: Option<i64>,
     ) -> rusqlite::Result<String> {
         let tx = self.conn.transaction()?;
@@ -24,7 +24,7 @@ impl Database {
 
         tx.execute(
             "INSERT INTO transactions
-                (id, product_id, type, quantity, price_per_unit, total_price, out_reason, timestamp)
+                (id, product_id, type, quantity, price_per_unit, total_price, reason, timestamp)
                 VALUES (?1, ?2, 'out', ?3, ?4, ?5, ?6, ?7)",
             params![
                 id,
@@ -32,7 +32,7 @@ impl Database {
                 quantity,
                 price_per_unit,
                 price_per_unit.map(|price| price * quantity),
-                out_reason,
+                reason,
                 now_ms()
             ],
         )?;
