@@ -20,6 +20,8 @@ pub enum DbError {
     InvalidQuantity,
     #[error("This flag doesn't exist or was already resolved")]
     FlagNotPending,
+    #[error("Invalid date, expected YYYY-MM-DD")]
+    InvalidDate,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

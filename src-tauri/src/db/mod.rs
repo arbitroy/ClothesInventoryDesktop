@@ -4,6 +4,7 @@ mod receipts;
 mod schema;
 mod transactions;
 mod flag;
+mod dates;  
 
 pub use error::{DbError, DbResult};
 pub use products::{Product, ProductWithStock};
