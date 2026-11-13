@@ -87,4 +87,24 @@ mod tests {
             .unwrap();
         assert_eq!(flags, 1);
     }
+
+    #[test]
+    fn in_adjustment_allowed_but_not_other_in_reasons() {
+        let db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", None, None).unwrap();
+
+        let ok = db.conn.execute(
+            "INSERT INTO transactions (id, product_id, type, reason, quantity, timestamp)
+            VALUES ('t1', ?1, 'in', 'adjustment', 2, 0)",
+            [&jeans],
+        );
+        assert!(ok.is_ok());
+
+        let bad = db.conn.execute(
+            "INSERT INTO transactions (id, product_id, type, reason, quantity, timestamp)
+            VALUES ('t2', ?1, 'in', 'sales', 2, 0)",
+            [&jeans],
+        );
+        assert!(bad.is_err());
+    }
 }
