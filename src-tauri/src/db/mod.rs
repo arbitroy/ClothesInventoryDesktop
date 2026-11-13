@@ -5,6 +5,7 @@ mod schema;
 mod transactions;
 mod flag;
 mod dates;  
+mod daily;
 
 pub use error::{DbError, DbResult};
 pub use products::{Product, ProductWithStock};
