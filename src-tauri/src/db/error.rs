@@ -22,6 +22,8 @@ pub enum DbError {
     FlagNotPending,
     #[error("Invalid date, expected YYYY-MM-DD")]
     InvalidDate,
+    #[error("This day is already closed")] 
+    DayAlreadyClosed,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

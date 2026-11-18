@@ -4,6 +4,7 @@ use crate::db::{
 };
 
 use super::Database;
+use rusqlite::params;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -16,6 +17,7 @@ pub struct DayPreviewRow {
     pub total_out: i64,
     pub expected: i64, // opening + total_in - total_out
 }
+
 impl Database {
     pub fn day_preview(&self, date: &str) -> DbResult<Vec<DayPreviewRow>> {
         let (start, end) = day_bounds_ms(date)?;
@@ -29,8 +31,35 @@ impl Database {
             return Err(DbError::DayAlreadyClosed);
         }
 
-        // prepare the query above, pass params![start, end],
-        // build each row, computing `expected` from the other three
+        let mut stmt = self.conn.prepare(
+            "   SELECT p.id, p.name,
+                COALESCE(SUM(CASE WHEN t.timestamp < ?1
+                THEN (CASE t.type WHEN 'in' THEN t.quantity ELSE -t.quantity END) END), 0),
+                COALESCE(SUM(CASE WHEN t.timestamp BETWEEN ?1 AND ?2 AND t.type = 'in'
+                THEN t.quantity END), 0),
+                COALESCE(SUM(CASE WHEN t.timestamp BETWEEN ?1 AND ?2 AND t.type = 'out'
+                THEN t.quantity END), 0)
+                FROM products p
+                LEFT JOIN transactions t ON t.product_id = p.id
+                WHERE p.deleted_at IS NULL
+                GROUP BY p.id
+                ORDER BY p.name",
+        )?;
+
+        let rows = stmt.query_map(params![start, end], |row| {
+            let opening: i64 = row.get(2)?;
+            let total_in: i64 = row.get(3)?;
+            let total_out: i64 = row.get(4)?;
+            Ok(DayPreviewRow {
+                product_id: row.get(0)?,
+                product_name: row.get(1)?,
+                opening,
+                total_in,
+                total_out,
+                expected: opening + total_in - total_out,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 }
 

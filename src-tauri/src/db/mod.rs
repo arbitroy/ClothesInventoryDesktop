@@ -11,6 +11,7 @@ pub use error::{DbError, DbResult};
 pub use products::{Product, ProductWithStock};
 pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
 pub use flag::PendingFlag;
+pub use daily::DayPreviewRow;
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};
