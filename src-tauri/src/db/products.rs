@@ -26,6 +26,22 @@ pub struct ProductWithStock {
 }
 
 impl Database {
+    pub(super) fn ensure_product_active(
+        conn: &rusqlite::Connection,
+        product_id: &str,
+    ) -> DbResult<()> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM products WHERE id = ?1 AND deleted_at IS NULL)",
+            [product_id],
+            |row| row.get(0),
+        )?;
+        if exists {
+            Ok(())
+        } else {
+            Err(DbError::ProductNotFound)
+        }
+    }
+    
     pub fn create_product(
         &self,
         name: &str,

@@ -43,6 +43,8 @@ pub fn run() {
             commands::list_products_with_stock,
             commands::list_pending_flags,
             commands::resolve_flag,
+            commands::day_preview,
+            commands::close_day,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

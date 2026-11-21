@@ -1,15 +1,17 @@
+use crate::db::{DbError, DbResult};
+
 use super::{Database, now_ms};
 use rusqlite::params;
 
 impl Database {
-    pub fn current_stock(&self, product_id: &str) -> rusqlite::Result<i64> {
-        self.conn.query_row(
+    pub fn current_stock(&self, product_id: &str) -> DbResult<i64> {
+        Ok(self.conn.query_row(
             "SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END), 0)
             FROM transactions
             WHERE product_id = ?1",
             [product_id],
             |row| row.get(0),
-        )
+        )?)
     }
 
     pub fn record_out(
@@ -18,7 +20,14 @@ impl Database {
         quantity: i64,
         reason: &str,
         price_per_unit: Option<i64>,
-    ) -> rusqlite::Result<String> {
+    ) -> DbResult<String> {
+        if quantity < 1 {
+            return Err(DbError::InvalidQuantity);
+        }
+        if !["sales", "damage", "adjustment"].contains(&reason) {
+            return Err(DbError::InvalidReason);
+        }
+        Self::ensure_product_active(&self.conn, product_id)?;
         let tx = self.conn.transaction()?;
         let id = uuid::Uuid::now_v7().to_string();
 
@@ -106,5 +115,20 @@ mod tests {
             [&jeans],
         );
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn record_out_refuses_bad_input() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", None, None).unwrap();
+
+        let r = db.record_out(&jeans, 0, "sales", None);
+        assert!(matches!(r, Err(DbError::InvalidQuantity)), "got: {r:?}");
+
+        let r = db.record_out(&jeans, 1, "gift", None);
+        assert!(matches!(r, Err(DbError::InvalidReason)), "got: {r:?}");
+
+        let r = db.record_out("nope", 1, "sales", None);
+        assert!(matches!(r, Err(DbError::ProductNotFound)), "got: {r:?}");
     }
 }

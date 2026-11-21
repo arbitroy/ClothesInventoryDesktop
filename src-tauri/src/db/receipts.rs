@@ -80,14 +80,7 @@ impl Database {
             return Err(DbError::InvalidQuantity);
         }
 
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM products WHERE id = ?1 AND deleted_at IS NULL)",
-            [product_id],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(DbError::ProductNotFound);
-        }
+        Self::ensure_product_active(&self.conn, product_id)?;
 
         let id = uuid::Uuid::now_v7().to_string();
         self.conn.execute(

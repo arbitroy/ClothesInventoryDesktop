@@ -1,6 +1,7 @@
 use crate::AppState;
 use crate::db::{
-    ContainerItem, DbError, PendingFlag, Product, ProductWithStock, Receipt, ReceiptTotals,
+    ContainerItem, DayCount, DayPreviewRow, DbError, PendingFlag, Product, ProductWithStock,
+    Receipt, ReceiptTotals,
 };
 use tauri::State;
 
@@ -106,4 +107,21 @@ pub fn resolve_flag(
 ) -> Result<(), DbError> {
     let db = state.db()?;
     db.resolve_flag(flag_id, approve)
+}
+
+#[tauri::command]
+pub fn day_preview(state: State<'_, AppState>, date: &str) -> Result<Vec<DayPreviewRow>, DbError> {
+    let db = state.db()?;
+    db.day_preview(date)
+}
+
+#[tauri::command]
+pub fn close_day(
+    state: State<'_, AppState>,
+    date: &str,
+    counts: Vec<DayCount>,
+    closed_by: &str,
+) -> Result<usize, DbError> {
+    let mut db = state.db()?;
+    db.close_day(date, &counts, closed_by)
 }

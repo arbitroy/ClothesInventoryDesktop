@@ -22,8 +22,18 @@ pub enum DbError {
     FlagNotPending,
     #[error("Invalid date, expected YYYY-MM-DD")]
     InvalidDate,
-    #[error("This day is already closed")] 
+    #[error("This day is already closed")]
     DayAlreadyClosed,
+    #[error("Missing a count for {0}")]
+    MissingCount(String),
+    #[error("Counts can't be negative")]
+    InvalidCount,
+    #[error("You can't close a day that hasn't happened yet")]
+    FutureDate,
+    #[error("A later day is already closed, so this day can't be closed now")]
+    DayOutOfOrder,
+    #[error("That isn't a valid reason for stock going out")]
+    InvalidReason,
 }
 
 pub type DbResult<T> = Result<T, DbError>;
