@@ -1,9 +1,8 @@
 use crate::db::{DbError, DbResult};
 
 use super::{Database, now_ms};
-use rusqlite::params;
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +56,41 @@ impl Database {
         )?;
         if changed == 0 {
             return Err(DbError::FlagNotPending);
+        }
+        Ok(())
+    }
+
+    pub(super) fn insert_flag(
+        conn: &Connection,
+        transaction_id: &str,
+        reason: &str,
+    ) -> DbResult<()> {
+        conn.execute(
+            "INSERT INTO review_flags (id, entity_type, entity_id, reason, status, created_at)
+         VALUES (?1, 'transaction', ?2, ?3, 'pending', ?4)",
+            params![
+                uuid::Uuid::now_v7().to_string(),
+                transaction_id,
+                reason,
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn flag_if_negative(
+        conn: &Connection,
+        product_id: &str,
+        transaction_id: &str,
+    ) -> DbResult<()> {
+        let stock: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END), 0)
+         FROM transactions WHERE product_id = ?1",
+            [product_id],
+            |row| row.get(0),
+        )?;
+        if stock < 0 {
+            Self::insert_flag(conn, transaction_id, "negative_stock")?;
         }
         Ok(())
     }

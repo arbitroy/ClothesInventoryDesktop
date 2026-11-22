@@ -1,17 +1,20 @@
+mod daily;
+mod dates;
 mod error;
+mod flag;
+mod migrations;
 mod products;
 mod receipts;
 mod schema;
 mod transactions;
-mod flag;
-mod dates;  
-mod daily;
+mod sync;
 
+pub use daily::{DayCount, DayPreviewRow};
 pub use error::{DbError, DbResult};
+pub use flag::PendingFlag;
 pub use products::{Product, ProductWithStock};
 pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
-pub use flag::PendingFlag;
-pub use daily::{DayCount,DayPreviewRow};
+pub use sync::{ChangeResult, IncomingChange};
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,10 +31,10 @@ fn now_ms() -> i64 {
 }
 
 impl Database {
-    pub fn open(path: impl AsRef<std::path::Path>) -> rusqlite::Result<Self> {
-        let conn = Connection::open(path)?;
+    pub fn open(path: impl AsRef<std::path::Path>) -> DbResult<Self> {
+        let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(schema::SCHEMA)?;
+        migrations::run(&mut conn)?;
         Ok(Self { conn })
     }
 }

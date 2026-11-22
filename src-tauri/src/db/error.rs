@@ -34,6 +34,12 @@ pub enum DbError {
     DayOutOfOrder,
     #[error("That isn't a valid reason for stock going out")]
     InvalidReason,
+    #[error("Invalid data: {0}")]
+    BadData(#[from] serde_json::Error),
+    #[error("This kind of change isn't supported")]
+    UnsupportedChange,
+    #[error("An update must say which version it started from")]
+    MissingBaseVersion,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

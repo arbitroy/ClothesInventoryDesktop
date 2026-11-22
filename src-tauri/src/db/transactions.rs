@@ -45,26 +45,7 @@ impl Database {
                 now_ms()
             ],
         )?;
-        let stock: i64 = tx.query_row(
-            "SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END), 0)
-            FROM transactions
-            WHERE product_id = ?1",
-            [product_id],
-            |row| row.get(0),
-        )?;
-        if stock.is_negative() {
-            let review_id = uuid::Uuid::now_v7().to_string();
-            tx.execute(
-                "
-            INSERT INTO review_flags
-            (id , entity_type, entity_id, reason, status, created_at)
-            VALUES
-            (?1, 'transaction', ?2, 'negative_stock', 'pending', ?3)
-            ",
-                params![review_id, id, now_ms()],
-            )?;
-        }
-
+        Self::flag_if_negative(&tx, product_id, &id)?;
         tx.commit()?;
         Ok(id)
     }

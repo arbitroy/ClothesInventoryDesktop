@@ -1,98 +1,41 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import "./App.css";
+import { onMessage } from "./api";
+import Products from "./products";
 import Receipts from "./Receipts";
+import Sell from "./sell";
+import Review from "./review";
+import DailyClose from "./dailyclose";
 
-type Product = {
-  id: string;
-  name: string;
-  size: string | null;
-  notes: string | null;
-  version: number;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-};
+const screens = { Products, Receipts, "Stock out": Sell, "Review flags": Review, "Daily close": DailyClose };
+type Screen = keyof typeof screens;
 
 export default function App() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [name, setName] = useState("");
-  const [tab, setTab] = useState<"products" | "receipts">("products");
-
-  async function load() {
-    setProducts(await invoke<Product[]>("list_products"));
-  }
-
-  async function add() {
-    if (!name.trim()) return;
-    await invoke("create_product", { name, size: null, notes: null });
-    setName("");
-    load();
-  }
-
-  async function deleteProduct(id: string) {
-    try {
-      await invoke("delete_product", { id });
-      load();
-    } catch (e) {
-      alert(`Delete failed: ${e}`);
-    }
-  }
-
-  async function updateProduct(p: Product, newName: string) {
-    try {
-      const changed = await invoke<number>("update_product", {
-        product: { ...p, name: newName },
-      });
-      if (changed === 0) {
-        alert(
-          "This product was changed somewhere else. Your edit was not saved.",
-        );
-      }
-      load();
-    } catch (e) {
-      alert(`Update failed: ${e}`);
-    }
-  }
+  const [tab, setTab] = useState<Screen>("Products");
+  const [msg, setMsg] = useState<{ text: string; kind: string } | null>(null);
 
   useEffect(() => {
-    load();
+    let timer: number | undefined;
+    onMessage((text, kind) => {
+      setMsg({ text, kind });
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setMsg(null), 6000);
+    });
   }, []);
 
+  const Current = screens[tab];
   return (
-    <main style={{ padding: 24 }}>
+    <div className="app">
       <nav>
-        <button onClick={() => setTab("products")}>Products</button>
-        <button onClick={() => setTab("receipts")}>Receipts</button>
+        <h1>Clothes inventory</h1>
+        {(Object.keys(screens) as Screen[]).map((k) => (
+          <button key={k} className={k === tab ? "on" : ""} onClick={() => setTab(k)}>{k}</button>
+        ))}
       </nav>
-      {tab === "products" ? (
-        <>
-          <h1>Products</h1>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Product name"
-          />
-          <button onClick={add}>Add</button>
-          <ul>
-            {products.map((p) => (
-              <li key={p.id}>
-                {p.name} V({p.version})
-                <button
-                  onClick={() => {
-                    const newName = prompt("New name", p.name);
-                    if (newName !== null) updateProduct(p, newName);
-                  }}
-                >
-                  Edit
-                </button>
-                <button onClick={() => deleteProduct(p.id)}>Delete</button>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <Receipts products={products} />
-      )}
-    </main>
+      <main>
+        {msg && <div className={"banner " + msg.kind} onClick={() => setMsg(null)}>{msg.text}</div>}
+        <Current products={[]} />
+      </main>
+    </div>
   );
 }
