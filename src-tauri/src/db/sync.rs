@@ -51,6 +51,43 @@ struct TransactionData {
     timestamp: i64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictView {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub device_id: String,
+    pub created_at: i64,
+    pub desktop: Value,
+    pub incoming: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReceiptData {
+    container_number: String,
+    received_date: i64,
+    notes: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemData {
+    receipt_id: String,
+    product_id: String,
+    quantity_received: i64,
+    notes: Option<String>,
+    created_at: i64,
+}
+
+#[derive(Deserialize)]
+struct StatusData {
+    status: String,
+}
+
 impl Database {
     fn previous_answer(conn: &Connection, change_id: &str) -> DbResult<Option<String>> {
         Ok(conn
@@ -159,11 +196,79 @@ impl Database {
         Ok(results)
     }
 
+    fn insert_receipt(conn: &Connection, c: &IncomingChange) -> DbResult<&'static str> {
+        if Self::row_exists(conn, "container_receipts", &c.id)? {
+            return Ok("duplicate");
+        }
+        let d: ReceiptData = serde_json::from_value(c.data.clone())?;
+        // always starts as a draft; finalizing arrives as its own update
+        conn.execute(
+            "INSERT INTO container_receipts
+           (id, container_number, received_date, notes, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                c.id,
+                d.container_number,
+                d.received_date,
+                d.notes,
+                d.created_at,
+                d.updated_at
+            ],
+        )?;
+        Ok("applied")
+    }
+
+    fn insert_item(conn: &Connection, c: &IncomingChange) -> DbResult<&'static str> {
+        if Self::row_exists(conn, "container_items", &c.id)? {
+            return Ok("duplicate");
+        }
+        let d: ItemData = serde_json::from_value(c.data.clone())?;
+        conn.execute(
+            "INSERT INTO container_items
+           (id, receipt_id, product_id, quantity_received, notes, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                c.id,
+                d.receipt_id,
+                d.product_id,
+                d.quantity_received,
+                d.notes,
+                d.created_at
+            ],
+        )?;
+        Ok("applied")
+    }
+
+    fn apply_receipt_update(conn: &Connection, c: &IncomingChange) -> DbResult<&'static str> {
+        let d: StatusData = serde_json::from_value(c.data.clone())?;
+        if d.status != "finalized" {
+            return Err(DbError::UnsupportedChange); // the only edit a phone can make
+        }
+        let already_finalized: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM container_receipts WHERE id = ?1 AND status = 'finalized')",
+            [&c.id],
+            |row| row.get(0),
+        )?;
+        if already_finalized {
+            return Ok("duplicate"); // already finalized, same outcome, nothing to fight over
+        }
+        conn.execute(
+            "UPDATE container_receipts
+         SET status = 'finalized', version = version + 1, updated_at = ?1
+         WHERE id = ?2",
+            params![now_ms(), c.id],
+        )?;
+        Ok("applied")
+    }
+
     fn apply_one(conn: &Connection, device_id: &str, c: &IncomingChange) -> DbResult<&'static str> {
         match (c.entity.as_str(), c.op.as_str()) {
             ("product", "insert") => Self::insert_product(conn, c),
             ("transaction", "insert") => Self::insert_transaction(conn, c),
             ("product", "update") => Self::apply_product_update(conn, device_id, c),
+            ("receipt", "insert") => Self::insert_receipt(conn, c),
+            ("receipt", "update") => Self::apply_receipt_update(conn, c),
+            ("container_item", "insert") => Self::insert_item(conn, c),
             _ => Err(DbError::UnsupportedChange),
         }
     }
@@ -186,6 +291,12 @@ impl Database {
             return Ok("duplicate");
         }
         let d: TransactionData = serde_json::from_value(c.data.clone())?;
+        if d.kind == "in" && d.reason.is_none() {
+            let item_id = d.receipt_item_id.as_deref().ok_or(DbError::BadStockInId)?;
+            if c.id != format!("in:{item_id}") {
+                return Err(DbError::BadStockInId);
+            }
+        }
         conn.execute(
             "INSERT INTO transactions
             (id, product_id, type, reason, quantity, user_id, notes,
@@ -234,12 +345,100 @@ impl Database {
             |row| row.get(0),
         )?)
     }
+
+    pub fn list_pending_conflicts(&self) -> DbResult<Vec<ConflictView>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.entity_type, c.entity_id, c.device_id, c.created_at, c.incoming,
+                p.name, p.size, p.notes, p.deleted_at
+                FROM conflicts c
+                JOIN products p ON p.id = c.entity_id
+                WHERE c.status = 'pending' AND c.entity_type = 'product'
+                ORDER BY c.created_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let incoming: String = row.get(5)?;
+            Ok(ConflictView {
+                id: row.get(0)?,
+                entity_type: row.get(1)?,
+                entity_id: row.get(2)?,
+                device_id: row.get(3)?,
+                created_at: row.get(4)?,
+                incoming: serde_json::from_str(&incoming).unwrap_or(Value::Null),
+                desktop: serde_json::json!({
+                    "name": row.get::<_, String>(6)?,
+                    "size": row.get::<_, Option<String>>(7)?,
+                    "notes": row.get::<_, Option<String>>(8)?,
+                    "deleted": row.get::<_, Option<i64>>(9)?.is_some(),
+                }),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn resolve_conflict(&mut self, conflict_id: &str, use_phone: bool) -> DbResult<()> {
+        let tx = self.conn.transaction()?;
+
+        let (entity_type, entity_id, incoming): (String, String, String) = tx
+            .query_row(
+                "SELECT entity_type, entity_id, incoming
+                FROM conflicts WHERE id = ?1 AND status = 'pending'",
+                [conflict_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .ok_or(DbError::ConflictNotPending)?;
+        if entity_type != "product" {
+            return Err(DbError::UnsupportedChange);
+        }
+
+        let now = now_ms();
+        if use_phone {
+            let deleted: Option<i64> = tx.query_row(
+                "SELECT deleted_at FROM products WHERE id = ?1",
+                [&entity_id],
+                |row| row.get(0),
+            )?;
+            if deleted.is_some() {
+                return Err(DbError::ProductDeleted);
+            }
+            let d: ProductData = serde_json::from_str(&incoming)?;
+            tx.execute(
+                "UPDATE products
+                    SET name = ?1, size = ?2, notes = ?3, version = version + 1, updated_at = ?4
+                    WHERE id = ?5",
+                params![d.name, d.size, d.notes, now, entity_id],
+            )?;
+        } else {
+            // keep the desktop's data, but still move the version on
+            tx.execute(
+                "UPDATE products SET version = version + 1, updated_at = ?1 WHERE id = ?2",
+                params![now, entity_id],
+            )?;
+        }
+
+        tx.execute(
+            "UPDATE conflicts SET status = 'resolved', resolution = ?1, resolved_at = ?2
+            WHERE id = ?3",
+            params![
+                if use_phone {
+                    "use_phone"
+                } else {
+                    "keep_desktop"
+                },
+                now,
+                conflict_id
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::now_ms;
+    use serde_json::json;
 
     #[test]
     fn push_applies_once_flags_oversell_and_isolates_failures() {
@@ -332,5 +531,116 @@ mod tests {
             .unwrap();
         assert_eq!(res[0].status, "conflict");
         assert_eq!(pending(&db), 1);
+    }
+
+    fn product_with_conflict(db: &mut Database) -> String {
+        let id = db.create_product("Jeans", None, None).unwrap(); // version 1
+        let edit = |change_id: &str, name: &str| IncomingChange {
+            change_id: change_id.into(),
+            entity: "product".into(),
+            id: id.clone(),
+            op: "update".into(),
+            base_version: Some(1),
+            data: serde_json::json!({
+                "name": name, "size": null, "notes": null, "createdAt": 0, "updatedAt": 0
+            }),
+        };
+        db.apply_changes("phone-1", &[edit("c1", "Jeans (blue)")])
+            .unwrap(); // applied, now v2
+        db.apply_changes("phone-2", &[edit("c2", "Denim")]).unwrap(); // conflict
+        id
+    }
+
+    fn log_count(db: &Database, id: &str) -> i64 {
+        db.conn
+            .query_row(
+                "SELECT COUNT(*) FROM change_log WHERE entity_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn resolving_for_the_phone_applies_its_version() {
+        let mut db = Database::open(":memory:").unwrap();
+        let id = product_with_conflict(&mut db);
+
+        let conflicts = db.list_pending_conflicts().unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].desktop["name"], "Jeans (blue)");
+        assert_eq!(conflicts[0].incoming["name"], "Denim");
+
+        let logged_before = log_count(&db, &id);
+        db.resolve_conflict(&conflicts[0].id, true).unwrap();
+
+        let p = db.get_product(&id).unwrap().unwrap();
+        assert_eq!((p.name.as_str(), p.version), ("Denim", 3));
+        assert!(db.list_pending_conflicts().unwrap().is_empty());
+        assert!(log_count(&db, &id) > logged_before); // the phone will pull it
+
+        // resolving again is refused
+        let r = db.resolve_conflict(&conflicts[0].id, true);
+        assert!(matches!(r, Err(DbError::ConflictNotPending)), "got: {r:?}");
+    }
+
+    #[test]
+    fn resolving_for_the_desktop_keeps_data_but_moves_the_version_on() {
+        let mut db = Database::open(":memory:").unwrap();
+        let id = product_with_conflict(&mut db);
+
+        let conflict_id = db.list_pending_conflicts().unwrap()[0].id.clone();
+        let logged_before = log_count(&db, &id);
+        db.resolve_conflict(&conflict_id, false).unwrap();
+
+        let p = db.get_product(&id).unwrap().unwrap();
+        assert_eq!((p.name.as_str(), p.version), ("Jeans (blue)", 3));
+        assert!(log_count(&db, &id) > logged_before);
+    }
+
+    #[test]
+    fn double_finalize_never_doubles_stock() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", None, None).unwrap();
+
+        let change =
+            |cid: &str, entity: &str, id: &str, op: &str, data: serde_json::Value| IncomingChange {
+                change_id: cid.into(),
+                entity: entity.into(),
+                id: id.into(),
+                op: op.into(),
+                base_version: None,
+                data,
+            };
+
+        // the phone creates a receipt with one item and pushes both
+        let res = db.apply_changes("phone-1", &[
+        change("c1", "receipt", "r1", "insert",
+            json!({"containerNumber": "BALE-009", "receivedDate": 0, "createdAt": 0, "updatedAt": 0})),
+        change("c2", "container_item", "i1", "insert",
+            json!({"receiptId": "r1", "productId": jeans, "quantityReceived": 10, "createdAt": 0})),
+    ]).unwrap();
+        assert!(res.iter().all(|r| r.status == "applied"), "got: {res:?}");
+
+        // the desktop finalizes it first: stock +10
+        db.finalize_receipt("r1").unwrap();
+        assert_eq!(db.current_stock(&jeans).unwrap(), 10);
+
+        // the phone finalized it too, and pushes its own version
+        let res = db.apply_changes("phone-1", &[
+        change("c3", "receipt", "r1", "update", json!({"status": "finalized"})),
+        change("c4", "transaction", "in:i1", "insert",
+            json!({"productId": jeans, "type": "in", "receiptItemId": "i1", "quantity": 10, "timestamp": 1})),
+    ]).unwrap();
+        assert_eq!(res[0].status, "duplicate");
+        assert_eq!(res[1].status, "duplicate");
+        assert_eq!(db.current_stock(&jeans).unwrap(), 10); // not 20
+
+        // a stock-in with a random id is refused
+        let res = db.apply_changes("phone-1", &[
+        change("c5", "transaction", "random-id", "insert",
+            json!({"productId": jeans, "type": "in", "receiptItemId": "i1", "quantity": 10, "timestamp": 1})),
+    ]).unwrap();
+        assert_eq!(res[0].status, "rejected", "got: {res:?}");
     }
 }

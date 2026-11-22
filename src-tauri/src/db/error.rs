@@ -40,6 +40,12 @@ pub enum DbError {
     UnsupportedChange,
     #[error("An update must say which version it started from")]
     MissingBaseVersion,
+    #[error("This conflict doesn't exist or was already resolved")]
+    ConflictNotPending,
+    #[error("This product was deleted, so only the desktop version can be kept")]
+    ProductDeleted,
+    #[error("A stock-in must have the id in:<item id>")]
+    BadStockInId,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

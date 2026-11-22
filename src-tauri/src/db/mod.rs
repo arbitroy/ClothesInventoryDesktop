@@ -14,7 +14,7 @@ pub use error::{DbError, DbResult};
 pub use flag::PendingFlag;
 pub use products::{Product, ProductWithStock};
 pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
-pub use sync::{ChangeResult, IncomingChange};
+pub use sync::{ChangeResult, IncomingChange, ConflictView};
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};

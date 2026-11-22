@@ -194,7 +194,7 @@ impl Database {
 
         // then insert one 'in' transaction per item
         for (item_id, product_id, quantity) in &items {
-            let id = uuid::Uuid::now_v7().to_string();
+            let id = format!("in:{item_id}");
             tx.execute(
                 "INSERT INTO transactions
                 (id, product_id, type, quantity, receipt_item_id, timestamp)
