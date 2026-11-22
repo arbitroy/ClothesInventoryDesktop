@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::db::now_ms;
 
 use super::dates::day_bounds_ms;
@@ -86,6 +88,22 @@ struct ItemData {
 #[derive(Deserialize)]
 struct StatusData {
     status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutgoingChange {
+    pub entity: String,
+    pub id: String,
+    pub data: Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullResult {
+    pub cursor: i64,
+    pub has_more: bool,
+    pub changes: Vec<OutgoingChange>,
 }
 
 impl Database {
@@ -432,6 +450,108 @@ impl Database {
         tx.commit()?;
         Ok(())
     }
+
+    pub fn changes_since(&self, since: i64, limit: i64) -> DbResult<PullResult> {
+        let limit = limit.clamp(1, 1000);
+
+        // read one page of the log (one extra row tells us if there is more)
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, entity_type, entity_id FROM change_log
+         WHERE seq > ?1 ORDER BY seq LIMIT ?2",
+        )?;
+        let mut log: Vec<(i64, String, String)> = stmt
+            .query_map(params![since, limit + 1], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+
+        let has_more = log.len() as i64 > limit;
+        log.truncate(limit as usize);
+        let cursor = log.last().map(|(seq, _, _)| *seq).unwrap_or(since);
+
+        // one entry per thing, parents before children
+        let mut latest: HashMap<(String, String), i64> = HashMap::new();
+        for (seq, entity, id) in log {
+            latest.insert((entity, id), seq); // later entries overwrite earlier ones
+        }
+        let mut order: Vec<((String, String), i64)> = latest.into_iter().collect();
+        order.sort_by_key(|(key, seq)| (Self::dependency_rank(&key.0), *seq));
+
+        let mut changes = Vec::with_capacity(order.len());
+        for ((entity, id), _) in order {
+            if let Some(data) = Self::entity_json(&self.conn, &entity, &id)? {
+                changes.push(OutgoingChange { entity, id, data });
+            }
+        }
+        Ok(PullResult {
+            cursor,
+            has_more,
+            changes,
+        })
+    }
+
+    fn dependency_rank(entity: &str) -> u8 {
+        match entity {
+            "product" => 0,
+            "receipt" => 1,
+            "container_item" => 2,
+            "transaction" => 3,
+            _ => 4, // daily_balance
+        }
+    }
+
+    // The current row as JSON, built by SQLite itself with json_object.
+    fn entity_json(conn: &Connection, entity: &str, id: &str) -> DbResult<Option<Value>> {
+        let text: Option<String> = if entity == "daily_balance" {
+            // its id is "date|productId"
+            let Some((date, product_id)) = id.split_once('|') else {
+                return Ok(None);
+            };
+            conn.query_row(
+                "SELECT json_object('date', date, 'productId', product_id,
+                'openingBalance', opening_balance, 'totalIn', total_in, 'totalOut', total_out,
+                'expectedBalance', expected_balance, 'closingBalance', closing_balance,
+                'variance', variance, 'varianceNotes', variance_notes,
+                'closedBy', closed_by, 'closedAt', closed_at)
+             FROM daily_balances WHERE date = ?1 AND product_id = ?2",
+                params![date, product_id],
+                |row| row.get(0),
+            )
+            .optional()?
+        } else {
+            let sql = match entity {
+                "product" => {
+                    "SELECT json_object('id', id, 'name', name, 'size', size, 'notes', notes,
+                'version', version, 'createdAt', created_at, 'updatedAt', updated_at,
+                'deletedAt', deleted_at) FROM products WHERE id = ?1"
+                }
+                "receipt" => {
+                    "SELECT json_object('id', id, 'containerNumber', container_number,
+                'receivedDate', received_date, 'notes', notes, 'status', status,
+                'version', version, 'createdAt', created_at, 'updatedAt', updated_at,
+                'deletedAt', deleted_at) FROM container_receipts WHERE id = ?1"
+                }
+                "container_item" => {
+                    "SELECT json_object('id', id, 'receiptId', receipt_id,
+                'productId', product_id, 'quantityReceived', quantity_received,
+                'notes', notes, 'createdAt', created_at) FROM container_items WHERE id = ?1"
+                }
+                "transaction" => {
+                    "SELECT json_object('id', id, 'productId', product_id, 'type', type,
+                'reason', reason, 'quantity', quantity, 'userId', user_id, 'notes', notes,
+                'receiptItemId', receipt_item_id, 'pricePerUnit', price_per_unit,
+                'totalPrice', total_price, 'timestamp', timestamp)
+                FROM transactions WHERE id = ?1"
+                }
+                _ => return Ok(None),
+            };
+            conn.query_row(sql, [id], |row| row.get(0)).optional()?
+        };
+        Ok(match text {
+            Some(t) => Some(serde_json::from_str(&t)?),
+            None => None,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -642,5 +762,55 @@ mod tests {
             json!({"productId": jeans, "type": "in", "receiptItemId": "i1", "quantity": 10, "timestamp": 1})),
     ]).unwrap();
         assert_eq!(res[0].status, "rejected", "got: {res:?}");
+    }
+
+    #[test]
+    fn pull_sends_current_state_in_order_and_pages_correctly() {
+        let mut db = Database::open(":memory:").unwrap();
+        let jeans = db.create_product("Jeans", None, None).unwrap();
+        let r = db.create_receipt("BALE-001", 0, None).unwrap();
+        db.add_item(&r, &jeans, 5, None).unwrap();
+        db.finalize_receipt(&r).unwrap();
+        let mut p = db.get_product(&jeans).unwrap().unwrap();
+        p.name = "Jeans (blue)".into();
+        db.update_product(&p).unwrap(); // the product has now changed twice
+
+        // everything at once: each thing once, parents first, latest data
+        let all = db.changes_since(0, 200).unwrap();
+        assert!(!all.has_more);
+        let kinds: Vec<&str> = all.changes.iter().map(|c| c.entity.as_str()).collect();
+        assert_eq!(
+            kinds,
+            ["product", "receipt", "container_item", "transaction"]
+        );
+        assert_eq!(all.changes[0].data["name"], "Jeans (blue)");
+        assert_eq!(all.changes[1].data["status"], "finalized");
+        assert!(all.changes[3].id.starts_with("in:"));
+
+        // nothing new after the cursor...
+        let none = db.changes_since(all.cursor, 200).unwrap();
+        assert!(none.changes.is_empty());
+        assert_eq!(none.cursor, all.cursor);
+
+        // ...until something changes
+        db.record_out(&jeans, 1, "sales", None).unwrap();
+        let next = db.changes_since(all.cursor, 200).unwrap();
+        assert_eq!(next.changes.len(), 1);
+        assert_eq!(next.changes[0].entity, "transaction");
+
+        // paging, two log entries at a time, still reaches everything
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = 0;
+        loop {
+            let page = db.changes_since(cursor, 2).unwrap();
+            for c in &page.changes {
+                seen.insert((c.entity.clone(), c.id.clone()));
+            }
+            cursor = page.cursor;
+            if !page.has_more {
+                break;
+            }
+        }
+        assert_eq!(seen.len(), 5); // the 4 above plus the new sale
     }
 }

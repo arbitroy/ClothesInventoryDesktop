@@ -46,6 +46,10 @@ pub enum DbError {
     ProductDeleted,
     #[error("A stock-in must have the id in:<item id>")]
     BadStockInId,
+    #[error("Not authorized")]
+    Unauthorized,
+    #[error("Wrong or expired pairing code")]
+    PairingFailed,
 }
 
 pub type DbResult<T> = Result<T, DbError>;

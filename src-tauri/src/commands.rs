@@ -1,9 +1,18 @@
 use crate::AppState;
 use crate::db::{
-    ContainerItem, DayCount, DayPreviewRow, DbError, PendingFlag, Product, ProductWithStock,
-    Receipt, ReceiptTotals,
+    ConflictView, ContainerItem, DayCount, DayPreviewRow, DbError, Device, PendingFlag, Product,
+    ProductWithStock, Receipt, ReceiptTotals,
 };
+use crate::server::Pairing;
+use serde::Serialize;
 use tauri::State;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingInfo {
+    pub code: String,
+    pub address: Option<String>,
+}
 
 #[tauri::command]
 pub fn list_products(state: State<'_, AppState>) -> Result<Vec<Product>, DbError> {
@@ -124,4 +133,41 @@ pub fn close_day(
 ) -> Result<usize, DbError> {
     let mut db = state.db()?;
     db.close_day(date, &counts, closed_by)
+}
+
+#[tauri::command]
+pub fn start_pairing(pairing: State<'_, Pairing>) -> Result<PairingInfo, DbError> {
+    let code = pairing.start()?;
+    let address = local_ip_address::local_ip()
+        .ok()
+        .map(|ip| format!("{ip}:8787"));
+    Ok(PairingInfo { code, address })
+}
+
+#[tauri::command]
+pub fn list_devices(state: State<'_, AppState>) -> Result<Vec<Device>, DbError> {
+    let db = state.db()?;
+    db.list_devices()
+}
+
+#[tauri::command]
+pub fn revoke_device(state: State<'_, AppState>, id: &str) -> Result<usize, DbError> {
+    let db = state.db()?;
+    db.revoke_device(id)
+}
+
+#[tauri::command]
+pub fn list_pending_conflicts(state: State<'_, AppState>) -> Result<Vec<ConflictView>, DbError> {
+    let db = state.db()?;
+    db.list_pending_conflicts()
+}
+
+#[tauri::command]
+pub fn resolve_conflict(
+    state: State<'_, AppState>,
+    conflict_id: &str,
+    use_phone: bool,
+) -> Result<(), DbError> {
+    let mut db = state.db()?;
+    db.resolve_conflict(conflict_id, use_phone)
 }

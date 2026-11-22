@@ -1,10 +1,10 @@
 mod commands;
 mod db;
+mod server;
 
 use db::Database;
 use std::sync::Mutex;
 use tauri::Manager;
-
 
 pub struct AppState {
     pub db: Mutex<Database>,
@@ -27,6 +27,21 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let db = Database::open(dir.join("inventory.db"))?;
             app.manage(AppState { db: Mutex::new(db) });
+            app.manage(server::Pairing::default());
+
+            // dev builds only: print a pairing code so we can test before the UI exists
+            #[cfg(debug_assertions)]
+            {
+                let code = app.state::<server::Pairing>().start()?;
+                println!("Pairing code (dev): {code}");
+            }
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = server::run(handle).await {
+                    eprintln!("Sync server stopped: {e}");
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -45,6 +60,11 @@ pub fn run() {
             commands::resolve_flag,
             commands::day_preview,
             commands::close_day,
+            commands::start_pairing,
+            commands::list_devices,
+            commands::revoke_device,
+            commands::list_pending_conflicts,
+            commands::resolve_conflict
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

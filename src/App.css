@@ -44,3 +44,6 @@ td input{width:100%}
 .banner.error{border-color:var(--bad);color:var(--bad)}
 .banner.warn{border-color:var(--warn);color:var(--warn)}
 .banner.ok{border-color:var(--good);color:var(--good)}
+.code{font-size:34px;font-weight:700;letter-spacing:.25em;font-variant-numeric:tabular-nums;margin:6px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card.stack{display:grid;gap:12px}

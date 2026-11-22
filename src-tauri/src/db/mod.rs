@@ -6,15 +6,17 @@ mod migrations;
 mod products;
 mod receipts;
 mod schema;
-mod transactions;
 mod sync;
+mod transactions;
+mod devices;
 
 pub use daily::{DayCount, DayPreviewRow};
 pub use error::{DbError, DbResult};
 pub use flag::PendingFlag;
 pub use products::{Product, ProductWithStock};
 pub use receipts::{ContainerItem, Receipt, ReceiptTotals};
-pub use sync::{ChangeResult, IncomingChange, ConflictView};
+pub use sync::{ChangeResult, ConflictView, IncomingChange, OutgoingChange, PullResult};
+pub use devices::Device;
 
 use rusqlite::Connection;
 use std::time::{SystemTime, UNIX_EPOCH};

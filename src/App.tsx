@@ -6,8 +6,9 @@ import Receipts from "./Receipts";
 import Sell from "./sell";
 import Review from "./review";
 import DailyClose from "./dailyclose";
+import Sync from "./Sync";
 
-const screens = { Products, Receipts, "Stock out": Sell, "Review flags": Review, "Daily close": DailyClose };
+const screens = { Products, Receipts, "Stock out": Sell, "Review flags": Review, "Daily close": DailyClose , "Sync": Sync};
 type Screen = keyof typeof screens;
 
 export default function App() {
